@@ -7,11 +7,11 @@ responses."""
 import asyncio
 import logging
 import socket
+import ssl
 from contextlib import suppress
 from typing import Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
-
 import aiohttp
 from async_timeout import timeout
 
@@ -39,7 +39,10 @@ class HubConnector:
                  ip_address: str,
                  response_queue: asyncio.Queue,
                  callbacks: ConnectorCallbackType = None,
-                 auto_reconnect=True) -> None:
+                 auto_reconnect=True,
+                 aio_client: aiohttp.ClientSession | None = None,
+                 ssl_context: ssl.SSLContext | None = None
+                 ) -> None:
         self._ip_address = ip_address
         self._response_queue = response_queue
         self._callbacks = callbacks if callbacks is not None else \
@@ -49,9 +52,9 @@ class HubConnector:
         self._remote_id = None
         self._domain = DEFAULT_DOMAIN
 
-        self._aiohttp_session = None
+        self._aiohttp_session = aio_client
         self._websocket = None
-
+        self._ssl_context = ssl_context
         self._connect_disconnect_lock = asyncio.Lock()
 
         self._listener_task = None
@@ -90,6 +93,7 @@ class HubConnector:
             verify_ssl=False,
             force_close=True,
             enable_cleanup_closed=True,
+            ssl_context=self._ssl_context
         )
 
         session_timeout = aiohttp.ClientTimeout(connect=DEFAULT_TIMEOUT)
@@ -97,7 +101,7 @@ class HubConnector:
                                                       timeout=session_timeout)
         return self._aiohttp_session
 
-    async def _get_remote_id(self) -> Optional[str]:
+    async def get_remote_id(self) -> Optional[str]:
         """Retrieve remote id from the HUB."""
 
         if self._remote_id is None:
@@ -109,6 +113,14 @@ class HubConnector:
                 self._domain = domain.netloc if domain.netloc else \
                     DEFAULT_DOMAIN
         return self._remote_id
+
+    async def async_close_session(self) -> None:
+        """"Close the aiohttp session."""
+        if self._aiohttp_session is None:
+            return
+        with suppress(asyncio.TimeoutError), timeout(DEFAULT_TIMEOUT):
+            await self._aiohttp_session.close()
+            self._aiohttp_session = None
 
     async def hub_connect(self, is_reconnect: bool = False) -> bool:
         """Connect to Hub Web Socket"""
@@ -128,7 +140,7 @@ class HubConnector:
             else:
                 log_level = 40
 
-            if await self._get_remote_id() is None:
+            if await self.get_remote_id() is None:
                 # No remote ID means no connect.
                 _LOGGER.log(log_level,
                             "%s: Unable to retrieve HUB id",
@@ -143,9 +155,10 @@ class HubConnector:
                         self._ip_address,
                         DEFAULT_HUB_PORT,
                         self._domain,
-                        self._remote_id
+                        self._remote_id,
                     ),
-                    heartbeat=10
+                    heartbeat=10,
+                    ssl_context=self._ssl_context
                 )
             except (aiohttp.ServerTimeoutError, aiohttp.ClientError,
                     aiohttp.WSServerHandshakeError) as exc:
@@ -248,12 +261,10 @@ class HubConnector:
                     self._aiohttp_session.closed:
                 _LOGGER.debug("%s: Closing sessions",
                               self._ip_address)
-                with suppress(asyncio.TimeoutError), timeout(DEFAULT_TIMEOUT):
-                    await self._aiohttp_session.close()
+                await self.async_close_session()
 
         # Set web socket to none allowing for reconnect.
         self._websocket = None
-        self._aiohttp_session = None
 
         is_reconnect = False
         self._connected = False

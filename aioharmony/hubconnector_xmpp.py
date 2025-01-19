@@ -9,7 +9,8 @@ import json
 import logging
 from typing import Optional
 from uuid import uuid4
-
+import aiohttp
+import ssl
 import slixmpp
 from async_timeout import timeout
 from slixmpp.exceptions import IqTimeout
@@ -45,13 +46,16 @@ class HubConnector(slixmpp.ClientXMPP):
                  ip_address: str,
                  response_queue: asyncio.Queue,
                  callbacks: ConnectorCallbackType = None,
-                 auto_reconnect=True) -> None:
+                 auto_reconnect=True,
+                 aio_client: aiohttp.ClientSession | None = None,
+                 ssl_context: ssl.SSLContext | None = None) -> None:
         self._ip_address = ip_address
         self._response_queue = response_queue
         self._callbacks = callbacks if callbacks is not None else \
             ConnectorCallbackType(None, None)
         self._auto_reconnect = auto_reconnect
-
+        self._aio_client = aio_client
+        self._ssl_context = ssl_context
         self._domain = DEFAULT_DOMAIN
 
         self._connect_disconnect_lock = asyncio.Lock()
@@ -247,7 +251,7 @@ class HubConnector(slixmpp.ClientXMPP):
 
             # Wait till we're disconnected.
             try:
-                with timeout(DEFAULT_TIMEOUT):
+                async with timeout(DEFAULT_TIMEOUT):
                     await disconnected
             except asyncio.TimeoutError:
                 _LOGGER.debug("%s: Timeout trying to disconnect.", self._ip_address)
