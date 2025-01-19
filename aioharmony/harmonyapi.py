@@ -13,6 +13,8 @@ Hub.
 import asyncio
 import json
 import logging
+import aiohttp
+import ssl
 from datetime import datetime, timedelta
 from typing import List, Optional, Union
 from aioharmony.const import (
@@ -39,14 +41,18 @@ class HarmonyAPI:
                  ip_address: str,
                  protocol: PROTOCOL = None,
                  callbacks: ClientCallbackType = None,
-                 loop: asyncio.AbstractEventLoop = None) -> None:
+                 loop: asyncio.AbstractEventLoop = None,
+                 aio_client: aiohttp.ClientSession | None = None,
+                 ssl_context: ssl.SSLContext | None = None) -> None:
         _LOGGER.debug("%s: Initialize", ip_address)
         loop = loop if loop else asyncio.get_event_loop()
         self._harmony_client = HarmonyClient(
             ip_address=ip_address,
             protocol=protocol,
             callbacks=callbacks,
-            loop=loop
+            loop=loop,
+            aio_client=aio_client,
+            ssl_context=ssl_context
         )
 
     @property
